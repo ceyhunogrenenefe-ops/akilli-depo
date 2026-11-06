@@ -95,4 +95,5 @@ export const ROLES = {
   depo: 'Depo sorumlusu',
   firma: 'Firma yetkilisi',
   bekliyor: 'Onay bekliyor',
+  pasif: 'Erişim kapalı',
 }

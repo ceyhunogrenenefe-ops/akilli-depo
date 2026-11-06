@@ -6,7 +6,7 @@ import { KIND } from '../lib/phone.js'
 
 export default function Admin() {
   const { can } = useStore()
-  const [tab, setTab] = useState('alicilar')
+  const [tab, setTab] = useState(() => (location.hash.includes('kullanicilar') ? 'kullanicilar' : 'alicilar'))
   if (!can.admin) return <div className="card p-6 text-slate-600">Bu bölüm yalnızca yöneticiler içindir.</div>
   return (
     <div className="space-y-3">
@@ -129,16 +129,24 @@ function UsersTab() {
       <div className="text-sm text-slate-600">
         <b>Yönetici</b>: her şey · <b>Personel</b>: palet/ürün ekler, düzenler, bildirim gönderir · <b>Depo sorumlusu</b>: tüm listeleri görür ve indirir · <b>Firma yetkilisi</b>: yalnızca kendi firmasının ürünlerini görür.
       </div>
+      {list && list.some(u => u.role === 'bekliyor') && (
+        <div className="card border-amber-300 p-4 ring-2 ring-amber-100">
+          <div className="mb-2 font-semibold text-slate-800">Onay bekleyen üyeler ({list.filter(u => u.role === 'bekliyor').length})</div>
+          <ul className="space-y-3">
+            {list.filter(u => u.role === 'bekliyor').map(u => <PendingUser key={u.id} u={u} onDone={load} />)}
+          </ul>
+        </div>
+      )}
       {list && (
         <ul className="card divide-y">
-          {list.map(u => (
+          {list.filter(u => u.role !== 'bekliyor').map(u => (
             <li key={u.id} className="flex flex-wrap items-center gap-2 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <div className="font-medium text-slate-800">{u.full_name || u.email}</div>
-                <div className="text-xs text-slate-500">{u.email}</div>
+                <div className="text-xs text-slate-500">{u.email}{u.phone ? ` · ${u.phone}` : ''}</div>
               </div>
               <select className="input w-auto py-1.5 text-sm" value={u.role} disabled={DEMO || u.id === user.id} onChange={e => upd(u, { role: e.target.value, company_id: e.target.value === 'firma' ? u.company_id : null })}>
-                {Object.entries(ROLES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {Object.entries(ROLES).filter(([k]) => k !== 'bekliyor').map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
               {u.role === 'firma' && (
                 <div className="w-44"><CompanySelect value={u.company_id || ''} onChange={v => upd(u, { company_id: v })} className="py-1.5 text-sm" /></div>
@@ -171,7 +179,7 @@ function NewUser({ onClose }) {
         <div><label className="label">Geçici şifre</label><input className="input" required minLength={8} value={f.password} onChange={e => set('password', e.target.value)} /></div>
         <div>
           <label className="label">Rol</label>
-          <select className="input" value={f.role} onChange={e => set('role', e.target.value)}>{Object.entries(ROLES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          <select className="input" value={f.role} onChange={e => set('role', e.target.value)}>{Object.entries(ROLES).filter(([k]) => !['bekliyor', 'pasif'].includes(k)).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         </div>
         {f.role === 'firma' && <div><label className="label">Firma</label><CompanySelect value={f.company_id} onChange={v => set('company_id', v)} /></div>}
         <button className="btn-primary w-full" disabled={busy || (f.role === 'firma' && !f.company_id)}>{busy ? 'Oluşturuluyor…' : 'Oluştur'}</button>
@@ -204,5 +212,34 @@ function System() {
         </button>
       )}
     </div>
+  )
+}
+
+function PendingUser({ u, onDone }) {
+  const { db, toast } = useStore()
+  const [role, setRole] = useState('personel')
+  const [company, setCompany] = useState('')
+  const [busy, setBusy] = useState(false)
+  const act = async patch => {
+    setBusy(true)
+    try { await db.updateUser(u.id, patch); toast(patch.role === 'pasif' ? `${u.full_name || u.email} reddedildi` : `${u.full_name || u.email} onaylandı`); onDone() }
+    catch (e) { toast(e.message, { type: 'error' }) } finally { setBusy(false) }
+  }
+  return (
+    <li className="rounded-xl border border-slate-200 p-3">
+      <div className="font-medium text-slate-800">{u.full_name || u.email}</div>
+      <div className="text-xs text-slate-500">{u.email}{u.phone ? ` · ${u.phone}` : ''} · {new Date(u.created_at).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}</div>
+      {u.request_note && <div className="mt-1 text-sm italic text-slate-600">“{u.request_note}”</div>}
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <select className="input py-2 text-sm" value={role} onChange={e => setRole(e.target.value)}>
+          {['personel', 'depo', 'firma', 'admin'].map(k => <option key={k} value={k}>{ROLES[k]}</option>)}
+        </select>
+        {role === 'firma' ? <CompanySelect value={company} onChange={setCompany} className="py-2 text-sm" /> : <div />}
+      </div>
+      <div className="mt-2 flex gap-2">
+        <button className="btn-light btn-sm flex-1 text-red-700" disabled={busy} onClick={() => { if (window.confirm(`${u.full_name || u.email} reddedilsin mi?`)) act({ role: 'pasif', company_id: null }) }}>Reddet</button>
+        <button className="btn-green btn-sm flex-1" disabled={busy || (role === 'firma' && !company)} onClick={() => act({ role, company_id: role === 'firma' ? company : null })}>Onayla</button>
+      </div>
+    </li>
   )
 }

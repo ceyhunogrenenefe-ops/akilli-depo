@@ -44,6 +44,7 @@ function demoMutate(fn, audit) {
 const demo = {
   async session() { return DEMO_USER },
   async signIn() { return DEMO_USER },
+  async signUp() { throw new Error('Demo modunda üye kaydı yok') },
   async signOut() {},
   subscribe(cb) { listeners.add(cb); return () => listeners.delete(cb) },
   async loadAll() { const d = load(); return { companies: d.companies, pallets: d.pallets, items: d.items } },
@@ -155,10 +156,22 @@ const sb = {
   },
   async signIn(email, password) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw new Error(error.message === 'Invalid login credentials' ? 'E-posta veya şifre hatalı' : error.message)
+    if (error) throw new Error(error.message === 'Invalid login credentials' ? 'E-posta veya şifre hatalı' : /not confirmed/i.test(error.message) ? 'E-posta adresiniz henüz doğrulanmadı. Gelen kutunuzdaki bağlantıya tıklayın.' : error.message)
     return sb.session()
   },
   async signOut() { await supabase.auth.signOut() },
+  async signUp({ email, password, full_name, phone, request_note }) {
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name, phone, request_note } } })
+    if (error) {
+      const m = error.message || ''
+      if (/already registered|already exists/i.test(m)) throw new Error('Bu e-posta ile zaten bir hesap var. Giriş yapmayı deneyin.')
+      if (/signups not allowed|disabled/i.test(m)) throw new Error('Üye kaydı şu an kapalı. Yöneticiye başvurun.')
+      if (/password/i.test(m)) throw new Error('Şifre en az 6 karakter olmalı')
+      throw new Error(m)
+    }
+    // E-posta onayı açıksa oturum gelmez
+    return { needsEmailConfirm: !data.session, user: data.session ? await sb.session() : null }
+  },
   subscribe(cb) {
     let t
     const deb = () => { clearTimeout(t); t = setTimeout(cb, 250) }

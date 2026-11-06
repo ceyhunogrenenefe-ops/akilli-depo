@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { PackagePlus, Mic, Layers, Building2, FileSpreadsheet, Send, History } from 'lucide-react'
+import { PackagePlus, Mic, Layers, Building2, FileSpreadsheet, Send, History, UserPlus } from 'lucide-react'
 import { useStore } from '../store.jsx'
 import { unitTotals } from '../components/ui.jsx'
 
@@ -7,6 +8,8 @@ export default function Home() {
   const { data, can, run, db, setActivePalletId, activePalletId, palletById, itemsByPallet, toast } = useStore()
   const nav = useNavigate()
   const active = activePalletId ? palletById[activePalletId] : null
+  const [pending, setPending] = useState(0)
+  useEffect(() => { if (can.admin) db.users().then(u => setPending(u.filter(x => x.role === 'bekliyor').length)).catch(() => {}) }, [can.admin, db])
 
   const newPallet = async () => {
     const p = await run(() => db.createPallet())
@@ -28,6 +31,11 @@ export default function Home() {
   const open = data.pallets.filter(p => p.status === 'acik').length
   return (
     <div className="space-y-4">
+      {pending > 0 && (
+        <Link to="/yonetim?kullanicilar" className="card flex items-center gap-3 border-amber-300 bg-amber-50 p-4 text-amber-900">
+          <UserPlus size={22} /> <span className="flex-1 font-semibold">{pending} yeni üye onay bekliyor</span> <span className="text-sm underline">İncele</span>
+        </Link>
+      )}
       {can.edit && (
         <div className="card flex items-center gap-3 p-4">
           <div className="flex-1">
