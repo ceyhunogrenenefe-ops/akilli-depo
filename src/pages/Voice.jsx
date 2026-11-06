@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Mic, MicOff, Send, AlertTriangle, Undo2, Info, Plus, X } from 'lucide-react'
+import { Mic, MicOff, Send, Undo2, Info, Plus, X, CheckCircle2, ListChecks } from 'lucide-react'
 import { useStore } from '../store.jsx'
-import { parseCommand, ISSUE_TEXT, trLower, fmtQty } from '../lib/parser.js'
+import { parseCommand, trLower, fmtQty } from '../lib/parser.js'
 import { PalletSelect, CompanySelect, UnitSelect } from '../components/ui.jsx'
 
 const SR = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null
-const YES = /^(evet|onayla|onaylıyorum|kaydet|tamam|doğru|olur)\b/
-const NO = /^(hayır|iptal|vazgeç|sil|yanlış)\b/
-const UNDO = /^(geri al|son kaydı sil|sonuncuyu sil)/
+const SAVE = /^(kaydet|onayla|onaylıyorum|bitti|tamam|tamamdır|evet|hepsini kaydet|listeyi kaydet)$/
+const CLEAR = /^(listeyi temizle|listeyi sil|hepsini sil|hepsini iptal et)$/
+const UNDO = /^(geri al|sonuncuyu sil|son satırı sil|sonuncuyu iptal et)$/
+const DRAFT_KEY = 'akilli-depo-taslak'
 
 export function speak(text) {
   try {
@@ -22,91 +23,106 @@ export function speak(text) {
   } catch { /* ses yok */ }
 }
 
+const num = q => Number(String(q).replace(',', '.'))
+const missing = d => [
+  !d.pallet_id && 'palet',
+  !d.company_id && 'firma',
+  !d.product?.trim() && 'ürün',
+  !(num(d.quantity) > 0) && 'miktar',
+].filter(Boolean)
+
 export default function Voice() {
   const store = useStore()
-  const { data, db, toast, reload, activePalletId, setActivePalletId, palletById, companyById, settings, setSettings, can } = store
+  const { data, db, toast, reload, activePalletId, setActivePalletId, settings, setSettings, can } = store
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
   const [lastText, setLastText] = useState('')
-  const [pending, setPending] = useState(null) // { text, drafts: [...] }
+  const [list, setListState] = useState(() => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY)) || [] } catch { return [] } })
   const [typed, setTyped] = useState('')
-  const [recent, setRecent] = useState([]) // [{ids, label}]
+  const [recent, setRecent] = useState([])
   const [busy, setBusy] = useState(false)
+  const [showMissing, setShowMissing] = useState(false)
   const recRef = useRef(null)
   const stopRef = useRef(false)
   const ctx = useRef()
-  ctx.current = { ...store, pending, recent }
+  ctx.current = { ...store, list, recent }
+
+  const setList = fn => setListState(prev => {
+    const next = typeof fn === 'function' ? fn(prev) : fn
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(next)) } catch { /* yok */ }
+    return next
+  })
 
   useEffect(() => () => { stopRef.current = true; recRef.current?.abort?.() }, [])
 
-  // --------------------------------------------- komutu palet/firma kayıtlarına bağla
-  function resolve(parsed) {
-    const { data, palletByNumber, nextPalletNumber, activePalletId } = ctx.current
-    const lastPallet = [...data.pallets].sort((a, b) => b.number - a.number)[0]
-    const drafts = parsed.items.map(it => {
-      const issues = it.issues.filter(i => i !== 'palet' && i !== 'birim')
-      const warnings = it.issues.includes('birim') ? ['birim'] : []
-      let pallet_id = null, palletNote = null
-      if (it.pallet != null) {
-        const p = palletByNumber[it.pallet]
-        if (p) pallet_id = p.id
-        else {
-          pallet_id = `new:${it.pallet}`
-          if (it.pallet !== nextPalletNumber) issues.push('palet_yeni')
-          palletNote = `Palet ${it.pallet} yok, oluşturulacak`
-        }
-      } else if (it.palletRef === 'last') { if (lastPallet) pallet_id = lastPallet.id; else pallet_id = `new:${nextPalletNumber}` }
-      else if (it.palletRef === 'new') { pallet_id = `new:${nextPalletNumber}`; palletNote = `Yeni palet: Palet ${nextPalletNumber}` }
-      else if (activePalletId) { pallet_id = activePalletId; palletNote = 'Aktif palet kullanıldı' }
-      else issues.push('palet')
-      return {
-        key: Math.random().toString(36).slice(2),
-        pallet_id: pallet_id || '', company_id: it.companyId || '', companyHeard: it.companyHeard,
-        product: it.product, quantity: it.quantity ?? '', unit: it.unit, issues, warnings, palletNote,
-      }
-    })
-    return { drafts, confident: drafts.length > 0 && drafts.every(d => d.issues.length === 0) }
-  }
-
   function palletLabel(id) {
-    if (!id) return '?'
-    if (String(id).startsWith('new:')) return `Palet ${id.slice(4)}`
+    if (!id) return 'Palet ?'
+    if (String(id).startsWith('new:')) return `Palet ${id.slice(4)} (yeni)`
     return `Palet ${ctx.current.palletById[id]?.number ?? '?'}`
   }
 
-  // --------------------------------------------- kaydet
-  async function save(drafts) {
-    const { db } = ctx.current
+  // --------------------------------------------- konuşmayı satırlara çevir (hata göstermeden)
+  function toDrafts(parsed) {
+    const { data, palletByNumber, nextPalletNumber, activePalletId, list } = ctx.current
+    const prev = list[list.length - 1]
+    const lastPallet = [...data.pallets].sort((a, b) => b.number - a.number)[0]
+    let carryPallet = prev?.pallet_id || activePalletId || ''
+    let carryCompany = prev?.company_id || ''
+    return parsed.items.map(it => {
+      let pallet_id = ''
+      if (it.pallet != null) pallet_id = palletByNumber[it.pallet]?.id || `new:${it.pallet}`
+      else if (it.palletRef === 'last') pallet_id = lastPallet?.id || `new:${nextPalletNumber}`
+      else if (it.palletRef === 'new') pallet_id = `new:${nextPalletNumber}`
+      else if (it.palletRef === 'current') pallet_id = activePalletId || ''
+      else pallet_id = carryPallet
+      const company_id = it.companyId || (it.companyHeard ? '' : carryCompany)
+      carryPallet = pallet_id; carryCompany = company_id || carryCompany
+      return {
+        key: Math.random().toString(36).slice(2),
+        heard: parsed.text,
+        pallet_id, company_id, companyHeard: company_id ? null : it.companyHeard,
+        product: it.product || '', quantity: it.quantity ?? '', unit: it.unit || 'adet',
+      }
+    })
+  }
+
+  // --------------------------------------------- kaydet (onaydan sonra)
+  async function saveAll(override) {
+    const { db, settings } = ctx.current
+    const list = Array.isArray(override) ? override : ctx.current.list
+    if (!list.length) { if (settings.speak) speak('Liste boş'); return }
+    const bad = list.filter(d => missing(d).length)
+    if (bad.length) {
+      setShowMissing(true)
+      if (settings.speak) speak(`${bad.length} satırda eksik bilgi var. Sarı satırları tamamlayıp tekrar onaylayın.`)
+      return
+    }
     setBusy(true)
     try {
       const created = {}
       const rows = []
-      for (const d of drafts) {
+      for (const d of list) {
         let pid = d.pallet_id
         if (String(pid).startsWith('new:')) {
           const n = Number(pid.slice(4))
           if (!created[n]) created[n] = (await db.createPallet(n)).id
           pid = created[n]
         }
-        rows.push({ pallet_id: pid, company_id: d.company_id, product: d.product.trim(), quantity: Number(String(d.quantity).replace(',', '.')), unit: d.unit, source: 'ses' })
+        rows.push({ pallet_id: pid, company_id: d.company_id, product: d.product.trim(), quantity: num(d.quantity), unit: d.unit, source: 'ses' })
       }
       const saved = await db.createItems(rows)
       await reload()
       setActivePalletId(rows[rows.length - 1].pallet_id)
-      const coName = id => ctx.current.companyById[id]?.name || ''
-      const label = drafts.map(d => `${palletLabel(d.pallet_id)} · ${coName(d.company_id)} · ${d.product} ${fmtQty(d.quantity)} ${d.unit}`).join('\n')
       const ids = saved.map(s => s.id)
+      const coName = id => ctx.current.companyById[id]?.name || ''
+      const label = list.map(d => `${palletLabel(d.pallet_id).replace(' (yeni)', '')} · ${coName(d.company_id)} · ${d.product} ${fmtQty(d.quantity)} ${d.unit}`).join('\n')
       setRecent(r => [{ ids, label, at: Date.now() }, ...r].slice(0, 15))
-      toast(`Kaydedildi: ${label.replace(/\n/g, '  +  ')}`, { action: { label: 'Geri Al', fn: () => undo(ids) } })
-      if (ctx.current.settings.speak) {
-        speak(drafts.map(d => `${palletLabel(d.pallet_id)}, ${coName(d.company_id)}, ${fmtQty(d.quantity)} ${d.unit} ${d.product}`).join('. ') + ' kaydedildi')
-      }
-      setPending(null)
-      return true
+      setList([])
+      setShowMissing(false)
+      toast(`${rows.length} ürün kaydedildi`, { action: { label: 'Geri Al', fn: () => undo(ids) } })
+      if (settings.speak) speak(`${rows.length} ürün kaydedildi`)
     } catch (e) {
       toast(e.message, { type: 'error' })
-      if (ctx.current.settings.speak) speak('Kayıt başarısız')
-      return false
     } finally { setBusy(false) }
   }
 
@@ -116,7 +132,6 @@ export default function Voice() {
       await ctx.current.reload()
       setRecent(r => r.filter(x => x.ids !== ids))
       toast('Geri alındı')
-      if (ctx.current.settings.speak) speak('Geri alındı')
     } catch (e) { toast(e.message, { type: 'error' }) }
   }
 
@@ -128,35 +143,31 @@ export default function Voice() {
     setLastText(text)
     setInterim('')
     const t = trLower(text).replace(/[.!?,]/g, '').trim()
-    const { pending, recent, settings } = ctx.current
+    const { settings, list } = ctx.current
 
-    if (UNDO.test(t)) { if (recent[0]) undo(recent[0].ids); else toast('Geri alınacak kayıt yok', { type: 'warn' }); return }
-    if (pending) {
-      if (YES.test(t)) { if (pending.drafts.every(valid)) await save(pending.drafts); else { toast('Eksik alanları doldurun', { type: 'warn' }); if (settings.speak) speak('Eksik bilgi var') } return }
-      if (NO.test(t)) { setPending(null); toast('İptal edildi'); if (settings.speak) speak('İptal edildi'); return }
-    }
-
-    // birden fazla tanıma alternatifi varsa net olanı seç
-    let best = null
-    for (const a of alts) {
-      const r = resolve(parseCommand(a, ctx.current.data.companies))
-      if (!best) best = { ...r, text: a }
-      if (r.confident) { best = { ...r, text: a }; break }
-    }
-    if (!best.drafts.length) {
-      toast(`Anlaşılamadı: “${text}”`, { type: 'warn' })
-      if (settings.speak) speak('Anlaşılamadı, tekrar söyleyin')
+    if (SAVE.test(t)) return saveAll()
+    if (CLEAR.test(t)) { setList([]); setShowMissing(false); if (settings.speak) speak('Liste temizlendi'); return }
+    if (UNDO.test(t)) {
+      if (list.length) { setList(l => l.slice(0, -1)); if (settings.speak) speak('Son satır silindi') }
+      else if (ctx.current.recent[0]) undo(ctx.current.recent[0].ids)
       return
     }
-    if (best.confident && settings.autoSave) {
-      await save(best.drafts)
-    } else {
-      ctx.current.clearToasts()
-      setPending({ text: best.text, drafts: best.drafts })
-      if (settings.speak) {
-        const iss = [...new Set(best.drafts.flatMap(d => d.issues))]
-        speak(iss.length ? `Onay gerekiyor. ${iss.map(i => ISSUE_TEXT[i] || (i === 'palet_yeni' ? 'Yeni palet oluşturulacak' : '')).join('. ')}` : 'Onaylıyor musunuz?')
-      }
+
+    // birden fazla tanıma alternatifi varsa en eksiksiz olanı seç
+    let best = null, bestScore = -1
+    for (const a of alts) {
+      const drafts = toDrafts({ ...parseCommand(a, ctx.current.data.companies), text: a })
+      const score = drafts.length ? drafts.reduce((s, d) => s + 4 - missing(d).length, 0) / drafts.length : -1
+      if (score > bestScore) { best = drafts; bestScore = score }
+    }
+    if (!best?.length) return // anlaşılmayan cümle: sessizce yok say
+
+    if (settings.autoSave && best.every(d => !missing(d).length)) {
+      return saveAll([...ctx.current.list, ...best])
+    }
+    setList(l => [...l, ...best])
+    if (settings.speak) {
+      speak(best.map(d => [d.quantity !== '' ? `${fmtQty(d.quantity)} ${d.unit}` : '', d.product].filter(Boolean).join(' ')).join(', '))
     }
   }
 
@@ -184,40 +195,34 @@ export default function Voice() {
     }
     rec.onend = () => {
       setListening(false)
-      const { settings, pending } = ctx.current
-      if (settings.continuous && !stopRef.current) setTimeout(() => { if (!stopRef.current) start() }, 250)
-      else if (pending && !stopRef.current) { /* onay bekleniyor */ }
+      if (ctx.current.settings.continuous && !stopRef.current) setTimeout(() => { if (!stopRef.current) start() }, 250)
     }
     recRef.current = rec
     try { rec.start(); setListening(true) } catch { /* zaten çalışıyor */ }
   }
   function stop() { stopRef.current = true; recRef.current?.stop?.(); setListening(false) }
 
-  // onay beklerken kısa dinleme: "evet / iptal"
-  useEffect(() => {
-    if (pending && settings.continuous && !listening && !stopRef.current) { const t = setTimeout(start, 1600); return () => clearTimeout(t) }
-  }, [pending]) // eslint-disable-line
-
-  const valid = d => d.pallet_id && d.company_id && d.product?.trim() && Number(String(d.quantity).replace(',', '.')) > 0
-  const updDraft = (key, patch) => setPending(p => ({ ...p, drafts: p.drafts.map(d => d.key === key ? { ...d, ...patch, issues: d.issues.filter(i => !issueFixedBy(i, patch)) } : d) }))
-  const issueFixedBy = (i, patch) => (i === 'palet' || i === 'palet_yeni') ? 'pallet_id' in patch : i.startsWith('firma') ? 'company_id' in patch : i === 'urun' ? 'product' in patch : i === 'miktar' ? 'quantity' in patch : false
+  const upd = (key, patch) => setList(l => l.map(d => d.key === key ? { ...d, ...patch, ...(patch.company_id ? { companyHeard: null } : {}) } : d))
+  const remove = key => setList(l => l.filter(d => d.key !== key))
 
   async function addHeardCompany(d) {
     try {
       const c = await db.createCompany({ name: d.companyHeard, code: null })
       await reload()
-      updDraft(d.key, { company_id: c.id })
+      setList(l => l.map(x => x.companyHeard === d.companyHeard && !x.company_id ? { ...x, company_id: c.id, companyHeard: null } : x))
       toast(`${c.name} firmalara eklendi`)
     } catch (e) { toast(e.message, { type: 'error' }) }
   }
 
   if (!can.edit) return <div className="card p-6 text-slate-600">Bu bölüm için yetkiniz yok.</div>
 
+  const incomplete = list.filter(d => missing(d).length).length
+
   return (
     <div className="space-y-4">
       {/* Aktif palet */}
       <div className="card flex items-center gap-3 p-3">
-        <div className="text-sm text-slate-500 shrink-0">Aktif palet</div>
+        <div className="shrink-0 text-sm text-slate-500">Aktif palet</div>
         <PalletSelect value={activePalletId || ''} onChange={async v => {
           if (String(v).startsWith('new:')) { const p = await db.createPallet(Number(v.slice(4))); await reload(); setActivePalletId(p.id); toast(`Palet ${p.number} oluşturuldu`) }
           else setActivePalletId(v)
@@ -230,15 +235,15 @@ export default function Voice() {
           <>
             <button
               onClick={listening ? stop : start}
-              className={`relative flex h-36 w-36 items-center justify-center rounded-full text-white shadow-lg transition active:scale-95 ${listening ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+              className={`relative flex h-32 w-32 items-center justify-center rounded-full text-white shadow-lg transition active:scale-95 ${listening ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-700'}`}
               aria-label={listening ? 'Dinlemeyi durdur' : 'Konuşmaya başla'}
             >
               {listening && <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-30" />}
-              {listening ? <MicOff size={56} /> : <Mic size={56} />}
+              {listening ? <MicOff size={52} /> : <Mic size={52} />}
             </button>
             <div className="text-center">
-              <div className="font-semibold text-slate-800">{listening ? 'Dinliyorum…' : 'Konuşmak için dokunun'}</div>
-              <div className="min-h-6 text-slate-500">{interim || (lastText && <>Son komut: “{lastText}”</>)}</div>
+              <div className="font-semibold text-slate-800">{listening ? 'Dinliyorum… ürünleri sırayla söyleyin' : 'Konuşmak için dokunun'}</div>
+              <div className="min-h-6 text-slate-500">{interim || (lastText && <>Son duyulan: “{lastText}”</>)}</div>
             </div>
           </>
         ) : (
@@ -250,64 +255,73 @@ export default function Voice() {
 
         <form className="flex w-full gap-2" onSubmit={e => { e.preventDefault(); if (typed.trim()) { handleText(typed); setTyped('') } }}>
           <input className="input" value={typed} onChange={e => setTyped(e.target.value)} placeholder="Komutu yazın veya klavyeden dikte edin…" enterKeyHint="send" />
-          <button className="btn-primary px-3" aria-label="Gönder"><Send size={20} /></button>
+          <button className="btn-primary px-3" aria-label="Listeye ekle"><Send size={20} /></button>
         </form>
 
         <div className="flex w-full flex-wrap justify-center gap-x-4 gap-y-2 text-sm text-slate-600">
-          <label className="flex items-center gap-2"><input type="checkbox" checked={settings.autoSave} onChange={e => setSettings({ autoSave: e.target.checked })} /> Net komutları direkt kaydet</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={settings.speak} onChange={e => setSettings({ speak: e.target.checked })} /> Sesli geri bildirim</label>
           {SR && <label className="flex items-center gap-2"><input type="checkbox" checked={settings.continuous} onChange={e => setSettings({ continuous: e.target.checked })} /> Sürekli dinle</label>}
+          <label className="flex items-center gap-2"><input type="checkbox" checked={settings.speak} onChange={e => setSettings({ speak: e.target.checked })} /> Sesli tekrar</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={settings.autoSave} onChange={e => setSettings({ autoSave: e.target.checked })} /> Onay beklemeden kaydet</label>
         </div>
       </div>
 
-      {/* Onay kartı */}
-      {pending && (
-        <div className="card border-amber-300 p-4 ring-2 ring-amber-200">
-          <div className="mb-3 flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={20} />
-            <div>
-              <div className="font-semibold text-slate-800">Onay gerekiyor</div>
-              <div className="text-sm text-slate-500">Duyulan: “{pending.text}”</div>
-            </div>
-          </div>
-          <div className="space-y-3">
-            {pending.drafts.map(d => (
-              <div key={d.key} className="rounded-xl border border-slate-200 p-3">
-                {(d.issues.length > 0 || d.warnings.length > 0 || d.palletNote) && (
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {d.issues.map(i => <span key={i} className="chip bg-amber-100 text-amber-900">{i === 'palet_yeni' ? d.palletNote : ISSUE_TEXT[i]}</span>)}
-                    {d.warnings.map(i => <span key={i} className="chip bg-slate-100 text-slate-700">{ISSUE_TEXT[i]}</span>)}
-                    {d.palletNote && !d.issues.includes('palet_yeni') && <span className="chip bg-sky-100 text-sky-800">{d.palletNote}</span>}
-                  </div>
-                )}
-                <div className="grid grid-cols-2 gap-2">
-                  <PalletSelect value={d.pallet_id} onChange={v => updDraft(d.key, { pallet_id: v })} className={d.issues.some(i => i.startsWith('palet')) ? 'border-amber-400' : ''} />
-                  <CompanySelect value={d.company_id} onChange={v => updDraft(d.key, { company_id: v })} className={d.issues.some(i => i.startsWith('firma')) ? 'border-amber-400' : ''} />
-                  <input className={`input col-span-2 ${d.issues.includes('urun') ? 'border-amber-400' : ''}`} value={d.product} placeholder="Ürün adı" onChange={e => updDraft(d.key, { product: e.target.value })} />
-                  <input className={`input ${d.issues.includes('miktar') ? 'border-amber-400' : ''}`} inputMode="decimal" value={d.quantity} placeholder="Miktar" onChange={e => updDraft(d.key, { quantity: e.target.value })} />
-                  <UnitSelect value={d.unit} onChange={v => updDraft(d.key, { unit: v })} />
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {d.companyHeard && !d.company_id && can.admin && (
-                    <button className="btn-outline btn-sm" onClick={() => addHeardCompany(d)}><Plus size={16} /> “{d.companyHeard}” firmasını ekle</button>
-                  )}
-                  {pending.drafts.length > 1 && <button className="btn-light btn-sm ml-auto" onClick={() => setPending(p => ({ ...p, drafts: p.drafts.filter(x => x.key !== d.key) }))}><X size={16} /> Bu satırı çıkar</button>}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 flex gap-2">
-            <button className="btn-light flex-1" onClick={() => setPending(null)}>İptal</button>
-            <button className="btn-green flex-1" disabled={busy || !pending.drafts.every(valid)} onClick={() => save(pending.drafts)}>Onayla ve Kaydet</button>
-          </div>
-          <div className="mt-2 text-center text-xs text-slate-500">Sesle de cevap verebilirsiniz: “evet” veya “iptal”</div>
+      {/* Onay listesi */}
+      <div className="card p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <ListChecks className="text-brand-700" size={22} />
+          <div className="font-semibold text-slate-800">Onay bekleyen ürünler ({list.length})</div>
+          {list.length > 0 && <button className="btn-light btn-sm ml-auto" onClick={() => { if (window.confirm('Liste temizlensin mi?')) { setList([]); setShowMissing(false) } }}>Temizle</button>}
         </div>
-      )}
 
-      {/* Son kayıtlar */}
+        {list.length === 0 ? (
+          <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+            Mikrofona basıp ürünleri arka arkaya söyleyin. Her cümle buraya eklenir. Bitince <b>“kaydet”</b> deyin veya aşağıdaki butona basın.
+            <div className="mt-2 text-slate-500">Örnek: “Birinci palete A firması için domates salçası 40 adet” … “25 koli makarna” … “kaydet”</div>
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {list.map((d, idx) => {
+              const miss = missing(d)
+              const warn = miss.length > 0
+              return (
+                <li key={d.key} className={`rounded-xl border p-3 ${warn ? (showMissing ? 'border-amber-400 bg-amber-50' : 'border-amber-200 bg-amber-50/50') : 'border-slate-200'}`}>
+                  <div className="mb-2 flex items-start gap-2 text-xs text-slate-500">
+                    <span className="font-semibold text-slate-700">{idx + 1}.</span>
+                    <span className="flex-1">“{d.heard}”</span>
+                    <button className="text-slate-400 hover:text-red-600" onClick={() => remove(d.key)} aria-label="Satırı sil"><X size={18} /></button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <PalletSelect value={d.pallet_id} onChange={v => upd(d.key, { pallet_id: v })} className={`py-2 ${!d.pallet_id ? 'border-amber-400' : ''}`} />
+                    <CompanySelect value={d.company_id} onChange={v => upd(d.key, { company_id: v })} className={`py-2 ${!d.company_id ? 'border-amber-400' : ''}`} />
+                    <input className={`input col-span-2 py-2 ${!d.product.trim() ? 'border-amber-400' : ''}`} value={d.product} placeholder="Ürün adı" onChange={e => upd(d.key, { product: e.target.value })} />
+                    <input className={`input py-2 ${!(num(d.quantity) > 0) ? 'border-amber-400' : ''}`} inputMode="decimal" value={d.quantity} placeholder="Miktar" onChange={e => upd(d.key, { quantity: e.target.value })} />
+                    <UnitSelect value={d.unit} onChange={v => upd(d.key, { unit: v })} className="py-2" />
+                  </div>
+                  {warn && <div className="mt-2 text-xs text-amber-800">Seçilmesi gereken: {miss.join(', ')}</div>}
+                  {d.companyHeard && !d.company_id && can.admin && (
+                    <button className="btn-outline btn-sm mt-2" onClick={() => addHeardCompany(d)}><Plus size={16} /> “{d.companyHeard}” firmasını ekle</button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        {list.length > 0 && (
+          <>
+            <button className="btn-green mt-4 w-full py-3 text-base" disabled={busy} onClick={() => saveAll()}>
+              <CheckCircle2 size={20} /> {busy ? 'Kaydediliyor…' : `Onayla ve ${list.length} ürünü kaydet`}
+            </button>
+            {incomplete > 0 && <div className="mt-2 text-center text-xs text-amber-800">{incomplete} satırda seçim gerekiyor (sarı alanlar)</div>}
+            <div className="mt-1 text-center text-xs text-slate-500">Sesle: “kaydet” · “son satırı sil” · “listeyi temizle”</div>
+          </>
+        )}
+      </div>
+
+      {/* Kaydedilenler */}
       {recent.length > 0 && (
         <div className="card p-4">
-          <div className="mb-2 font-semibold text-slate-800">Bu oturumda eklenenler</div>
+          <div className="mb-2 font-semibold text-slate-800">Bu oturumda kaydedilenler</div>
           <ul className="divide-y">
             {recent.map(r => {
               const alive = r.ids.some(id => data.items.some(i => i.id === id))
@@ -322,18 +336,15 @@ export default function Voice() {
         </div>
       )}
 
-      {/* Örnekler */}
       <details className="card p-4 text-sm text-slate-600">
-        <summary className="cursor-pointer font-semibold text-slate-800">Örnek komutlar</summary>
+        <summary className="cursor-pointer font-semibold text-slate-800">Nasıl konuşmalıyım?</summary>
         <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>“Birinci palete A firması için domates salçası 40 adet ekle.”</li>
-          <li>“İkinci palete B firmasından 25 koli makarna ekle.”</li>
-          <li>“3. palete C firması için 10 kasa ayran ve 5 çuval un.”</li>
-          <li>“A firması 12 koli zeytin” — palet söylenmezse <b>aktif palet</b> kullanılır.</li>
-          <li>“Son palete …”, “Yeni palete …”</li>
-          <li>“Geri al” — son kaydı siler. Onay kartında “evet” / “iptal”.</li>
+          <li>“Birinci palete A firması için domates salçası 40 adet”</li>
+          <li>Aynı palet ve firma için devam ederken yalnızca ürünü söyleyin: “25 koli makarna”, “10 kasa ayran”. Palet ve firma bir önceki satırdan alınır.</li>
+          <li>Firma: “A firması”, “firma A”, “be firmasından”, “A için” ya da tam adı (“Yılmaz Gıda”).</li>
+          <li>Bitince: <b>“kaydet”</b> (veya “onayla”, “bitti”). Son satırı silmek: “son satırı sil”.</li>
         </ul>
-        <div className="mt-2">Firmalar kod harfiyle (“A firması”, “be firması”) veya tam adıyla (“Yılmaz Gıda için”) söylenebilir. Kodları <Link className="text-brand-600 underline" to="/firmalar">Firmalar</Link> sayfasından düzenleyin.</div>
+        <div className="mt-2">Firma kodlarını <Link className="text-brand-600 underline" to="/firmalar">Firmalar</Link> sayfasından düzenleyebilirsiniz.</div>
       </details>
     </div>
   )

@@ -4,8 +4,8 @@ import { db, DEMO } from './lib/db.js'
 const Ctx = createContext(null)
 export const useStore = () => useContext(Ctx)
 
-const SETTINGS_KEY = 'akilli-depo-ayarlar'
-const DEFAULT_SETTINGS = { autoSave: true, speak: true, continuous: false }
+const SETTINGS_KEY = 'akilli-depo-ayarlar-v2'
+const DEFAULT_SETTINGS = { autoSave: false, speak: true, continuous: true }
 
 export function StoreProvider({ children }) {
   const [user, setUser] = useState(undefined) // undefined = yükleniyor, null = giriş yok

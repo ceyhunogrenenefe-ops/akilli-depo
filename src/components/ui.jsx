@@ -55,7 +55,8 @@ export function PalletSelect({ value, onChange, allowNew = true, className = '' 
     <select className={`input ${className}`} value={value ?? ''} onChange={e => onChange(e.target.value)}>
       <option value="" disabled>Palet seçin</option>
       {pallets.map(p => <option key={p.id} value={p.id}>Palet {p.number}{p.status !== 'acik' ? ` (${STATUS[p.status].label})` : ''}</option>)}
-      {allowNew && <option value={`new:${nextPalletNumber}`}>+ Yeni palet (Palet {nextPalletNumber})</option>}
+      {String(value || '').startsWith('new:') && value !== `new:${nextPalletNumber}` && <option value={value}>Palet {value.slice(4)} (yeni)</option>}
+      {allowNew && <option value={`new:${nextPalletNumber}`}>Palet {nextPalletNumber} (yeni)</option>}
     </select>
   )
 }

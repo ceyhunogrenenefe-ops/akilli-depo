@@ -54,7 +54,7 @@ const LETTER_NAMES = {
   re: 'r', se: 's', şe: 'ş', te: 't', u: 'u', ü: 'ü', ve: 'v', ye: 'y', ze: 'z',
 }
 
-const FIRMA_RE = /^firma(?:sı|sına|sından|sının|sında|ya|dan|nın|da|lar|ları|m)?$/
+const FIRMA_RE = /^(?:firma|şirket|sirket)[a-zçğıöşü]*$/
 const PALET_RE = /^palet(?:e|i|in|ine|inde|ten|te|ler|lere|e|ye|ime|imize|imiz|im|numarası|numara|no)?$/
 const STOP = new Set([
   'ekle', 'ekleyin', 'ekler', 'misin', 'mısın', 'koy', 'koyun', 'yaz', 'yazın', 'kaydet', 'kaydedin', 'gir', 'girin',
@@ -113,10 +113,32 @@ function tokenize(raw) {
     if (UNITS[w]) { out.push({ type: 'unit', v: UNITS[w], w }); continue }
     if (PALET_RE.test(w)) { out.push({ type: 'palet', w }); continue }
     if (FIRMA_RE.test(w)) { out.push({ type: 'firma', w }); continue }
+    const glued = w.match(/^([a-zçğıöşü]{1,2})(firma[a-zçğıöşü]*)$/)
+    if (glued) { out.push({ type: 'word', w: glued[1] }, { type: 'firma', w: glued[2] }); continue }
     if (w === 've') { out.push({ type: 'sep', w }); continue }
     out.push({ type: 'word', w })
   }
   return out
+}
+
+function lev(a, b) {
+  const m = a.length, n = b.length
+  if (Math.abs(m - n) > 2) return 9
+  let prev = Array.from({ length: n + 1 }, (_, j) => j)
+  for (let i = 1; i <= m; i++) {
+    const cur = [i]
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    prev = cur
+  }
+  return prev[n]
+}
+const ASCII = s => s.replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u')
+// telaffuz/yazım farkı toleransı: "yilmaz" ≈ "yılmaz", "akdeniz" ≈ "akdenis"
+function fuzzyEq(w, target) {
+  if (!w || w.startsWith('#') || target.length < 4) return false
+  const a = ASCII(w), b = ASCII(target)
+  if (a === b) return true
+  return lev(a, b) <= (b.length >= 7 ? 2 : 1)
 }
 
 function normalizeName(s) {
@@ -139,7 +161,7 @@ function findCompany(tokens, companies) {
           const w = words[i + j]
           const target = kw[j]
           // son kelimede ek olabilir: "yılmazdan", "yılmaz'ın"
-          if (!(w === target || (j === kw.length - 1 && w.startsWith(target) && w.length - target.length <= 4))) { ok = false; break }
+          if (!(w === target || (j === kw.length - 1 && w.startsWith(target) && w.length - target.length <= 4) || fuzzyEq(w, target))) { ok = false; break }
         }
         if (!ok) continue
         // tek harfli adlar ("a") yalnızca arkasından "firma" geliyorsa sayılır
@@ -150,15 +172,17 @@ function findCompany(tokens, companies) {
         if (!best || score > best.score) best = { company: c, start: i, end, score }
       }
     }
-    // kod eşleşmesi: "a firması", "be firmasından"
+    // kod eşleşmesi: "a firması", "be firmasından", "firma a", "a için"
     if (c.code) {
       const code = trLower(c.code)
-      for (let i = 0; i + 1 < words.length; i++) {
-        if (words[i + 1] !== '#firma') continue
-        const w = words[i]
-        if (w === code || LETTER_NAMES[w] === code) {
-          const score = 0.5
-          if (!best || score > best.score) best = { company: c, start: i, end: i + 2, score }
+      const isCode = w => w === code || LETTER_NAMES[w] === code || w === code + 'dan' || w === code + 'den' || w === code + 'ya' || w === code + 'ye'
+      for (let i = 0; i < words.length; i++) {
+        if (words[i + 1] === '#firma' && isCode(words[i])) {
+          if (!best || 0.5 > best.score) best = { company: c, start: i, end: i + 2, score: 0.5 }
+        } else if (words[i] === '#firma' && words[i + 1] && isCode(words[i + 1])) {
+          if (!best || 0.5 > best.score) best = { company: c, start: i, end: i + 2, score: 0.5 }
+        } else if (words[i + 1] === 'için' && isCode(words[i]) && code.length <= 3) {
+          if (!best || 0.4 > best.score) best = { company: c, start: i, end: i + 2, score: 0.4 }
         }
       }
     }

@@ -95,3 +95,17 @@ describe('sesli komut', () => {
     expect(one('1. palete B firması 6 tane bidon yağ')).toMatchObject({ quantity: 6, unit: 'adet' })
   })
 })
+
+describe('firma tanıma varyasyonları', () => {
+  const co = t => parseCommand(t, companies).items[0]?.companyId
+  it('firma A', () => expect(co('birinci palete firma A için 40 adet salça')).toBe('a'))
+  it('bitişik: afirması', () => expect(co('birinci palete afirması için 40 adet salça')).toBe('a'))
+  it('A firmasına ait', () => expect(co('1. palete A firmasına ait 40 adet salça')).toBe('a'))
+  it('A firmasının', () => expect(co('1. palete A firmasının 40 adet salçası')).toBe('a'))
+  it('şirket', () => expect(co('1. palete B şirketi için 5 koli çay')).toBe('b'))
+  it('A için (firma demeden)', () => expect(co('1. palete A için 40 adet salça')).toBe('a'))
+  it('ce firması', () => expect(co('1. palete ce firmasından 3 kasa su')).toBe('c'))
+  it('ASCII yazım: yilmaz gida', () => expect(co('2. palete yilmaz gida icin 30 kg peynir')).toBe('y'))
+  it('telaffuz farkı: yılmas gıda', () => expect(co('2. palete yılmas gıda için 30 kg peynir')).toBe('y'))
+  it('ürün adı korunur', () => expect(parseCommand('1. palete firma A için 40 adet domates salçası', companies).items[0].product).toBe('Domates Salçası'))
+})
