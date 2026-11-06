@@ -1,9 +1,13 @@
 // Veri katmanı: Supabase (kalıcı, çok kullanıcılı) veya Demo (tarayıcıda, tek kullanıcı)
 import { createClient } from '@supabase/supabase-js'
 
-const URL = import.meta.env.VITE_SUPABASE_URL
-const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
-export const DEMO = !URL || !KEY
+// Varsayılan: Akıllı Depo Supabase projesi (bu bilgiler herkese açıktır; erişimi veritabanı yetki kuralları korur).
+// Ortam değişkeniyle başka bir projeye yönlendirilebilir. VITE_DEMO=1 → tarayıcıda demo modu.
+const DEFAULT_URL = 'https://fxikolkybrddsxzncvzz.supabase.co'
+const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ4aWtvbGt5YnJkZHN4em5jdnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM5NzQxMzUsImV4cCI6MjEwOTU1MDEzNX0.3-yErB6RUz33YX5A4ifbX8cQNf_V3Kek0zC3QwsZxH8'
+const URL = import.meta.env.VITE_SUPABASE_URL || DEFAULT_URL
+const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_KEY
+export const DEMO = import.meta.env.VITE_DEMO === '1'
 export const supabase = DEMO ? null : createClient(URL, KEY)
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2))

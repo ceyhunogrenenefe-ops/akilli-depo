@@ -2,7 +2,7 @@
 import { createClient } from '@supabase/supabase-js'
 
 export function admin() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://fxikolkybrddsxzncvzz.supabase.co'
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw httpError(500, 'Sunucu ayarı eksik: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY')
   return createClient(url, key, { auth: { persistSession: false } })
