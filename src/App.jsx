@@ -16,6 +16,7 @@ export default function App() {
   const { user } = useStore()
   if (user === undefined) return <div className="flex h-screen items-center justify-center text-slate-500">Yükleniyor…</div>
   if (!user) return <Login />
+  if (user.role === 'bekliyor') return <Waiting />
   return (
     <Layout>
       <Routes>
@@ -103,6 +104,20 @@ function Login() {
         {err && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
         <button className="btn-primary w-full" disabled={busy}>{busy ? 'Giriş yapılıyor…' : 'Giriş Yap'}</button>
       </form>
+    </div>
+  )
+}
+
+function Waiting() {
+  const { user, db, setUser } = useStore()
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-brand-700 p-4">
+      <div className="card w-full max-w-sm space-y-3 p-6 text-center">
+        <Warehouse className="mx-auto text-brand-700" size={36} />
+        <div className="text-lg font-semibold text-slate-800">Hesabınız onay bekliyor</div>
+        <p className="text-sm text-slate-600">{user.email} hesabına henüz yetki verilmedi. Yöneticiden Yönetim → Kullanıcılar bölümünden rol atamasını isteyin.</p>
+        <button className="btn-light w-full" onClick={async () => { await db.signOut(); setUser(null) }}>Çıkış</button>
+      </div>
     </div>
   )
 }

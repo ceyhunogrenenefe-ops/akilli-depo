@@ -94,4 +94,5 @@ export const ROLES = {
   personel: 'Personel',
   depo: 'Depo sorumlusu',
   firma: 'Firma yetkilisi',
+  bekliyor: 'Onay bekliyor',
 }

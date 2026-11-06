@@ -23,11 +23,12 @@ create unique index if not exists companies_name_uq on public.companies (lower(n
 -- personel : palet / ürün ekler, düzenler, bildirim gönderir
 -- depo     : tüm listeleri görür, Excel indirir (Hollanda depo sorumlusu)
 -- firma    : yalnızca kendi firmasının ürünlerini görür
+-- bekliyor : hiçbir şey göremez (yönetici rol verene kadar)
 create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   email       text,
   full_name   text,
-  role        text not null default 'personel' check (role in ('admin','personel','depo','firma')),
+  role        text not null default 'bekliyor' check (role in ('admin','personel','depo','firma','bekliyor')),
   company_id  uuid references public.companies(id) on delete set null,
   created_at  timestamptz not null default now()
 );
@@ -136,8 +137,9 @@ begin
   values (
     new.id, new.email,
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email,'@',1)),
-    case when (select count(*) from public.profiles) = 0 then 'admin'
-         else coalesce(new.raw_user_meta_data->>'role','personel') end
+    -- İlk kullanıcı yönetici olur. Diğerleri yetkisiz başlar; rolü yönetici verir.
+    -- (Kayıt sırasında gönderilen rol bilgisine asla güvenilmez.)
+    case when (select count(*) from public.profiles) = 0 then 'admin' else 'bekliyor' end
   )
   on conflict (id) do nothing;
   return new;
