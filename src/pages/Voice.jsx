@@ -11,12 +11,17 @@ const CLEAR = /^(listeyi temizle|listeyi sil|hepsini sil|hepsini iptal et)$/
 const UNDO = /^(geri al|sonuncuyu sil|son satırı sil|sonuncuyu iptal et)$/
 const DRAFT_KEY = 'akilli-depo-taslak'
 
+// Sistem konuşurken ve hemen sonrasında gelen tanıma sonuçları yok sayılır (yankı döngüsünü önler)
+let speakingUntil = 0
+export const isSpeaking = () => Date.now() < speakingUntil || (typeof window !== 'undefined' && window.speechSynthesis?.speaking)
 export function speak(text) {
   try {
     if (!('speechSynthesis' in window)) return
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
     u.lang = 'tr-TR'; u.rate = 1.05
+    speakingUntil = Date.now() + 1500 + text.length * 90
+    u.onend = () => { speakingUntil = Date.now() + 1200 }
     const v = window.speechSynthesis.getVoices().find(v => v.lang?.toLowerCase().startsWith('tr'))
     if (v) u.voice = v
     window.speechSynthesis.speak(u)
@@ -43,6 +48,9 @@ export default function Voice() {
   const [busy, setBusy] = useState(false)
   const [showMissing, setShowMissing] = useState(false)
   const recRef = useRef(null)
+  const lastHeard = useRef({ text: '', at: 0 })
+  const lastActivity = useRef(0)
+  const [idleStopped, setIdleStopped] = useState(false)
   const stopRef = useRef(false)
   const ctx = useRef()
   ctx.current = { ...store, list, recent }
@@ -140,6 +148,11 @@ export default function Voice() {
     const alts = (Array.isArray(alternatives) ? alternatives : [alternatives]).map(s => s.trim()).filter(Boolean)
     if (!alts.length) return
     const text = alts[0]
+    const norm = trLower(text).replace(/[^a-zçğıöşü0-9]/g, '')
+    const now = Date.now()
+    if (lastHeard.current.text === norm && now - lastHeard.current.at < 6000) return
+    lastHeard.current = { text: norm, at: now }
+    lastActivity.current = now
     setLastText(text)
     setInterim('')
     const t = trLower(text).replace(/[.!?,]/g, '').trim()
@@ -166,25 +179,25 @@ export default function Voice() {
       return saveAll([...ctx.current.list, ...best])
     }
     setList(l => [...l, ...best])
-    if (settings.speak) {
-      speak(best.map(d => [d.quantity !== '' ? `${fmtQty(d.quantity)} ${d.unit}` : '', d.product].filter(Boolean).join(' ')).join(', '))
-    }
   }
 
   // --------------------------------------------- mikrofon
   function start() {
     if (!SR) return
     stopRef.current = false
+    setIdleStopped(false)
     const rec = new SR()
     rec.lang = 'tr-TR'
     rec.interimResults = true
     rec.maxAlternatives = 3
-    rec.continuous = false
+    rec.continuous = true
+    const done = new Set()
     rec.onresult = e => {
+      if (isSpeaking()) { setInterim(''); return }
       let inter = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i]
-        if (r.isFinal) handleText(Array.from(r).map(a => a.transcript))
+        if (r.isFinal) { if (!done.has(i)) { done.add(i); handleText(Array.from(r).map(a => a.transcript)) } }
         else inter += r[0].transcript
       }
       setInterim(inter)
@@ -195,12 +208,16 @@ export default function Voice() {
     }
     rec.onend = () => {
       setListening(false)
-      if (ctx.current.settings.continuous && !stopRef.current) setTimeout(() => { if (!stopRef.current) start() }, 250)
+      setInterim('')
+      if (!ctx.current.settings.continuous || stopRef.current) return
+      // 45 sn hiç konuşma yoksa dinlemeyi bırak (boşta sürekli açılıp kapanmasın)
+      if (Date.now() - lastActivity.current > 45000) { stopRef.current = true; setIdleStopped(true); return }
+      setTimeout(() => { if (!stopRef.current) start() }, 400)
     }
     recRef.current = rec
     try { rec.start(); setListening(true) } catch { /* zaten çalışıyor */ }
   }
-  function stop() { stopRef.current = true; recRef.current?.stop?.(); setListening(false) }
+  function stop() { stopRef.current = true; recRef.current?.stop?.(); setListening(false); setInterim('') }
 
   const upd = (key, patch) => setList(l => l.map(d => d.key === key ? { ...d, ...patch, ...(patch.company_id ? { companyHeard: null } : {}) } : d))
   const remove = key => setList(l => l.filter(d => d.key !== key))
@@ -234,7 +251,7 @@ export default function Voice() {
         {SR ? (
           <>
             <button
-              onClick={listening ? stop : start}
+              onClick={listening ? stop : () => { lastActivity.current = Date.now(); start() }}
               className={`relative flex h-32 w-32 items-center justify-center rounded-full text-white shadow-lg transition active:scale-95 ${listening ? 'bg-red-600' : 'bg-emerald-600 hover:bg-emerald-700'}`}
               aria-label={listening ? 'Dinlemeyi durdur' : 'Konuşmaya başla'}
             >
@@ -242,7 +259,7 @@ export default function Voice() {
               {listening ? <MicOff size={52} /> : <Mic size={52} />}
             </button>
             <div className="text-center">
-              <div className="font-semibold text-slate-800">{listening ? 'Dinliyorum… ürünleri sırayla söyleyin' : 'Konuşmak için dokunun'}</div>
+              <div className="font-semibold text-slate-800">{listening ? 'Dinliyorum… ürünleri sırayla söyleyin' : idleStopped ? 'Sessizlik nedeniyle durdu — devam için dokunun' : 'Konuşmak için dokunun'}</div>
               <div className="min-h-6 text-slate-500">{interim || (lastText && <>Son duyulan: “{lastText}”</>)}</div>
             </div>
           </>
@@ -260,7 +277,7 @@ export default function Voice() {
 
         <div className="flex w-full flex-wrap justify-center gap-x-4 gap-y-2 text-sm text-slate-600">
           {SR && <label className="flex items-center gap-2"><input type="checkbox" checked={settings.continuous} onChange={e => setSettings({ continuous: e.target.checked })} /> Sürekli dinle</label>}
-          <label className="flex items-center gap-2"><input type="checkbox" checked={settings.speak} onChange={e => setSettings({ speak: e.target.checked })} /> Sesli tekrar</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={settings.speak} onChange={e => setSettings({ speak: e.target.checked })} /> Sesli onay (kayıt sonrası)</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={settings.autoSave} onChange={e => setSettings({ autoSave: e.target.checked })} /> Onay beklemeden kaydet</label>
         </div>
       </div>
