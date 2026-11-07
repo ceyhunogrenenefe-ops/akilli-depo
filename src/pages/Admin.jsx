@@ -11,12 +11,13 @@ export default function Admin() {
   return (
     <div className="space-y-3">
       <div className="flex gap-1.5 overflow-x-auto">
-        {[['alicilar', 'Bildirim alıcıları'], ['kullanicilar', 'Kullanıcılar'], ['sistem', 'Sistem']].map(([k, l]) => (
+        {[['alicilar', 'Bildirim alıcıları'], ['kullanicilar', 'Kullanıcılar'], ['ses', 'Sesli komut'], ['sistem', 'Sistem']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className={`btn btn-sm ${tab === k ? 'bg-brand-700 text-white' : 'border border-slate-200 bg-white'}`}>{l}</button>
         ))}
       </div>
       {tab === 'alicilar' && <Recipients />}
       {tab === 'kullanicilar' && <UsersTab />}
+      {tab === 'ses' && <Learned />}
       {tab === 'sistem' && <System />}
     </div>
   )
@@ -241,5 +242,29 @@ function PendingUser({ u, onDone }) {
         <button className="btn-green btn-sm flex-1" disabled={busy || (role === 'firma' && !company)} onClick={() => act({ role, company_id: role === 'firma' ? company : null })}>Onayla</button>
       </div>
     </li>
+  )
+}
+
+function Learned() {
+  const { db, toast, companyById } = useStore()
+  const [rows, setRows] = useState(null)
+  const load = () => db.aliases().then(setRows).catch(e => { toast(e.message, { type: 'error' }); setRows([]) })
+  useEffect(() => { load() }, []) // eslint-disable-line
+  const del = async a => { try { await db.deleteAlias(a.kind, a.heard); load() } catch (e) { toast(e.message, { type: 'error' }) } }
+  return (
+    <div className="space-y-3">
+      <div className="text-sm text-slate-600">Sesli girişte yaptığınız firma ve ürün düzeltmeleri burada birikir; sistem bir dahaki sefere duyduğunu bu eşleştirmelerle tanır. Yanlış öğrenileni silebilirsiniz.</div>
+      {rows == null ? <div className="text-slate-500">Yükleniyor…</div> : rows.length === 0 ? <Empty title="Henüz öğrenilen düzeltme yok" /> : (
+        <ul className="card divide-y">
+          {rows.map(a => (
+            <li key={a.kind + a.heard} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+              <span className="chip bg-slate-100 text-slate-700">{a.kind === 'firma' ? 'Firma' : 'Ürün'}</span>
+              <span className="flex-1">“{a.heard}” → <b>{a.kind === 'firma' ? (companyById[a.value]?.name || 'silinmiş firma') : a.value}</b> <span className="text-xs text-slate-500">({a.uses}×)</span></span>
+              <button className="btn-light btn-sm px-2 text-red-600" onClick={() => del(a)} aria-label="Sil"><Trash2 size={16} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

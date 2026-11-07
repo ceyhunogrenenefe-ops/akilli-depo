@@ -108,6 +108,15 @@ const demo = {
   },
 
   async audit(limit = 300) { return load().audit.slice(0, limit) },
+  async aliases() { return load().aliases || [] },
+  async learnAlias(kind, heard, value) {
+    const d = load(); d.aliases ||= []
+    const a = d.aliases.find(x => x.kind === kind && x.heard === heard)
+    if (a) { a.uses = a.value === value ? a.uses + 1 : 1; a.value = value } else d.aliases.push({ kind, heard, value, uses: 1 })
+    save(d)
+  },
+  async deleteAlias(kind, heard) { const d = load(); d.aliases = (d.aliases || []).filter(x => !(x.kind === kind && x.heard === heard)); save(d) },
+  async parseWithAI() { return null },
 
   async recipients() { return load().recipients },
   async saveRecipient(r) {
@@ -200,6 +209,18 @@ const sb = {
   updateItem: (id, patch) => q(supabase.from('items').update(patch).eq('id', id)),
   deleteItems: ids => q(supabase.from('items').delete().in('id', ids)),
   audit: (limit = 300) => q(supabase.from('audit_log').select('*').order('at', { ascending: false }).limit(limit)),
+  aliases: () => q(supabase.from('voice_aliases').select('kind, heard, value, uses').order('uses', { ascending: false }).limit(2000)),
+  learnAlias: (kind, heard, value) => q(supabase.rpc('learn_alias', { p_kind: kind, p_heard: heard, p_value: value })),
+  deleteAlias: (kind, heard) => q(supabase.from('voice_aliases').delete().eq('kind', kind).eq('heard', heard)),
+  // Yapay zekâ ile ayrıştırma (sunucuda ANTHROPIC_API_KEY tanımlıysa). Tanımlı değilse null döner.
+  async parseWithAI(body) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch('/api/ayristir', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify(body) })
+      if (!r.ok) return null
+      return await r.json()
+    } catch { return null }
+  },
   recipients: () => q(supabase.from('recipients').select('*').order('kind').order('name')),
   saveRecipient: r => r.id
     ? q(supabase.from('recipients').update(r).eq('id', r.id))

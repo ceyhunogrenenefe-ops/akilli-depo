@@ -48,7 +48,7 @@ export const UNITS = {
 export const UNIT_LIST = ['adet', 'koli', 'kutu', 'paket', 'kasa', 'çuval', 'torba', 'şişe', 'teneke', 'bidon', 'kavanoz', 'balya', 'rulo', 'kg', 'gr', 'ton', 'litre', 'metre']
 
 // "A" harfinin okunuşları: be → b, ce → c ...
-const LETTER_NAMES = {
+export const LETTER_NAMES = {
   a: 'a', be: 'b', ce: 'c', çe: 'ç', de: 'd', e: 'e', fe: 'f', ge: 'g', ğe: 'ğ', he: 'h', ha: 'h',
   ı: 'ı', i: 'i', je: 'j', ke: 'k', ka: 'k', le: 'l', me: 'm', ne: 'n', o: 'o', ö: 'ö', pe: 'p',
   re: 'r', se: 's', şe: 'ş', te: 't', u: 'u', ü: 'ü', ve: 'v', ye: 'y', ze: 'z',
@@ -56,13 +56,13 @@ const LETTER_NAMES = {
 
 const FIRMA_RE = /^(?:firma|şirket|sirket)[a-zçğıöşü]*$/
 const PALET_RE = /^palet(?:e|i|in|ine|inde|ten|te|ler|lere|e|ye|ime|imize|imiz|im|numarası|numara|no)?$/
-const STOP = new Set([
+export const STOP = new Set([
   'ekle', 'ekleyin', 'ekler', 'misin', 'mısın', 'koy', 'koyun', 'yaz', 'yazın', 'kaydet', 'kaydedin', 'gir', 'girin',
   'lütfen', 'için', 'olarak', 'ile', 'de', 'da', 'ürün', 'ürünü', 'şunu', 'bunu', 'şimdi', 'tamam', 'ait', 'olan', 'bir', 've',
   'numaralı', 'numara', 'numarası', 'no', 'nolu', 'ekleyelim', 'ekliyorum', 'eklendi', 'ayrıca', 'sonra',
 ])
 
-function tokenize(raw) {
+export function tokenize(raw) {
   let s = trLower(raw)
     .replace(/[’'`´]/g, '')
     .replace(/(\d),(\d)/g, '$1.$2')
@@ -84,6 +84,7 @@ function tokenize(raw) {
       const tok = { type: 'num', v: parseFloat(dm[1]), ord: !!dm[2], w }
       out.push(tok)
       if (rest && UNITS[rest]) out.push({ type: 'unit', v: UNITS[rest], w: rest })
+      else if (rest && rest.length <= 3 && (!/^(e|a|ye|ya|i|ı|u|ü|de|da|te|ta|den|dan|ten|tan|in|ın|un|ün)$/.test(rest) || FIRMA_RE.test(words[i + 1] || ''))) out.push({ type: 'word', w: rest })
       continue
     }
     // Yazıyla sayı dizisi: "kırk", "yüz yirmi beş", "on ikinci"
@@ -121,7 +122,7 @@ function tokenize(raw) {
   return out
 }
 
-function lev(a, b) {
+export function lev(a, b) {
   const m = a.length, n = b.length
   if (Math.abs(m - n) > 2) return 9
   let prev = Array.from({ length: n + 1 }, (_, j) => j)
@@ -132,7 +133,7 @@ function lev(a, b) {
   }
   return prev[n]
 }
-const ASCII = s => s.replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u')
+export const ASCII = s => s.replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u')
 // telaffuz/yazım farkı toleransı: "yilmaz" ≈ "yılmaz", "akdeniz" ≈ "akdenis"
 function fuzzyEq(w, target) {
   if (!w || w.startsWith('#') || target.length < 4) return false
@@ -141,53 +142,67 @@ function fuzzyEq(w, target) {
   return lev(a, b) <= (b.length >= 7 ? 2 : 1)
 }
 
-function normalizeName(s) {
+export function normalizeName(s) {
   return trLower(s).replace(/[^a-zçğıöşü0-9\s]/g, ' ').replace(/\b(firması|firma|ltd|şti|a\.?ş|aş|san|tic)\b/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-// Belirteç dizisinde firma adını arar (en uzun eşleşme kazanır)
-function findCompany(tokens, companies) {
-  let best = null
+// Belirteç dizisinde firma adını arar (en uzun eşleşme kazanır).
+// opts.at verilirse yalnızca o konumdan başlayan eşleşmeler (sıralı mod).
+// Aynı puanla iki farklı firma eşleşirse sonuç "belirsiz" (ambiguous) işaretlenir.
+export function findCompany(tokens, companies, opts = {}) {
+  const cands = []
   const words = tokens.map(t => t.type === 'word' || t.type === 'unit' || t.type === 'num' ? trLower(t.w) : t.type === 'firma' ? '#firma' : '#')
+  const add = (c, start, end, score) => cands.push({ company: c, start, end, score })
   for (const c of companies) {
     const keys = new Set()
     const n = normalizeName(c.name)
     if (n) keys.add(n)
+    for (const a of c.aliases || []) { const na = normalizeName(a); if (na) keys.add(na) }
     for (const k of keys) {
       const kw = k.split(' ')
       for (let i = 0; i + kw.length <= words.length; i++) {
-        let ok = true
+        let ok = true, fuzzy = false
         for (let j = 0; j < kw.length; j++) {
           const w = words[i + j]
           const target = kw[j]
-          // son kelimede ek olabilir: "yılmazdan", "yılmaz'ın"
-          if (!(w === target || (j === kw.length - 1 && w.startsWith(target) && w.length - target.length <= 4) || fuzzyEq(w, target))) { ok = false; break }
+          if (w === target || (j === kw.length - 1 && w.startsWith(target) && w.length - target.length <= 4)) continue
+          if (fuzzyEq(w, target)) { fuzzy = true; continue }
+          ok = false; break
         }
         if (!ok) continue
-        // tek harfli adlar ("a") yalnızca arkasından "firma" geliyorsa sayılır
         if (k.length <= 2 && words[i + kw.length] !== '#firma') continue
         let end = i + kw.length
         if (words[end] === '#firma') end++
-        const score = k.length
-        if (!best || score > best.score) best = { company: c, start: i, end, score }
+        add(c, i, end, k.length - (fuzzy ? 0.5 : 0))
       }
     }
-    // kod eşleşmesi: "a firması", "be firmasından", "firma a", "a için"
     if (c.code) {
       const code = trLower(c.code)
       const isCode = w => w === code || LETTER_NAMES[w] === code || w === code + 'dan' || w === code + 'den' || w === code + 'ya' || w === code + 'ye'
       for (let i = 0; i < words.length; i++) {
-        if (words[i + 1] === '#firma' && isCode(words[i])) {
-          if (!best || 0.5 > best.score) best = { company: c, start: i, end: i + 2, score: 0.5 }
-        } else if (words[i] === '#firma' && words[i + 1] && isCode(words[i + 1])) {
-          if (!best || 0.5 > best.score) best = { company: c, start: i, end: i + 2, score: 0.5 }
-        } else if (words[i + 1] === 'için' && isCode(words[i]) && code.length <= 3) {
-          if (!best || 0.4 > best.score) best = { company: c, start: i, end: i + 2, score: 0.4 }
-        }
+        if (words[i + 1] === '#firma' && isCode(words[i])) add(c, i, i + 2, 0.5)
+        else if (words[i] === '#firma' && words[i + 1] && isCode(words[i + 1])) add(c, i, i + 2, 0.5)
+        else if (words[i + 1] === 'için' && isCode(words[i]) && code.length <= 3) add(c, i, i + 2, 0.4)
+        else if (opts.at === i && isCode(words[i]) && code.length <= 2 && (words[i + 1] === '#' || words[i + 1] === undefined || opts.loose)) add(c, i, i + 1, 0.3)
       }
     }
   }
-  return best
+  let list = opts.at != null ? cands.filter(x => x.start === opts.at) : cands
+  if (!list.length) return null
+  list.sort((a, b) => b.score - a.score || (b.end - b.start) - (a.end - a.start))
+  const best = list[0]
+  const rival = list.find(x => x.company.id !== best.company.id && x.score === best.score && x.start === best.start)
+  return rival ? { ...best, ambiguous: [best.company, rival.company] } : best
+}
+
+export function cleanProductWords(words) {
+  if (!words.length) return words
+  const w = [...words]
+  const last = w[w.length - 1]
+  let m
+  if ((m = last.match(/^(.+[ıiuü])(nı|ni|nu|nü)$/)) && /s[ıiuü]$/.test(m[1])) w[w.length - 1] = m[1]
+  else if ((m = last.match(/^(.+[aeıioöuü])(yı|yi|yu|yü)$/)) && m[1].length >= 3) w[w.length - 1] = m[1]
+  return w
 }
 
 function parseSegment(tokens, companies) {
@@ -210,8 +225,12 @@ function parseSegment(tokens, companies) {
 
   // 2) Firma
   const cm = findCompany(tokens, companies)
-  if (cm) {
+  if (cm && cm.ambiguous) {
+    res.companyAmbiguous = cm.ambiguous
+    for (let i = cm.start; i < cm.end; i++) used[i] = true
+  } else if (cm) {
     res.company = cm.company
+    res.companyRaw = tokens.slice(cm.start, cm.end).map(t => t.w).join(' ')
     for (let i = cm.start; i < cm.end; i++) used[i] = true
   } else {
     // "xyz firması" denmiş ama tanınmamış
@@ -255,7 +274,7 @@ function parseSegment(tokens, companies) {
     if (t.type === 'word' && !STOP.has(t.w)) productWords.push(t.w)
     else if (t.type === 'unit' && !res.unitExplicit) productWords.push(t.w)
   }
-  res.product = titleCaseTr(productWords.join(' '))
+  res.product = titleCaseTr(cleanProductWords(productWords).join(' '))
   return res
 }
 
@@ -300,7 +319,7 @@ export function parseCommand(text, companies = []) {
     if (p.pallet != null || p.palletRef) lastPal = p
     else if (lastPal || firstPal) { const src = lastPal || firstPal; p.pallet = src.pallet; p.palletRef = src.palletRef; p.palletInherited = true }
     if (p.company) lastCo = p
-    else if (!p.companyHeard && (lastCo || firstCo)) { p.company = (lastCo || firstCo).company; p.companyInherited = true }
+    else if (!p.companyHeard && !p.companyAmbiguous && (lastCo || firstCo)) { p.company = (lastCo || firstCo).company; p.companyInherited = true }
   }
 
   const items = parsed
@@ -308,7 +327,7 @@ export function parseCommand(text, companies = []) {
     .map(p => {
       const issues = []
       if (p.pallet == null && !p.palletRef) issues.push('palet')
-      if (!p.company) issues.push(p.companyHeard ? 'firma_bilinmiyor' : 'firma')
+      if (!p.company) issues.push(p.companyAmbiguous ? 'firma_belirsiz' : p.companyHeard ? 'firma_bilinmiyor' : 'firma')
       if (!p.product) issues.push('urun')
       if (p.quantity == null) issues.push('miktar')
       else if (!p.unitExplicit) issues.push('birim')
@@ -318,6 +337,9 @@ export function parseCommand(text, companies = []) {
         companyId: p.company?.id ?? null,
         companyName: p.company?.name ?? p.companyHeard ?? null,
         companyHeard: p.companyHeard,
+        companyRaw: p.companyRaw || null,
+        companyAmbiguous: p.companyAmbiguous || null,
+        unitExplicit: p.unitExplicit,
         product: p.product.replace(/ &(?= )/g, ' ve'),
         quantity: p.quantity,
         unit: p.unit || 'adet',
@@ -337,6 +359,7 @@ export const ISSUE_TEXT = {
   palet: 'Palet numarası anlaşılamadı',
   firma: 'Firma anlaşılamadı',
   firma_bilinmiyor: 'Bu firma kayıtlı değil',
+  firma_belirsiz: 'Birden fazla firmaya benziyor',
   urun: 'Ürün adı anlaşılamadı',
   miktar: 'Miktar anlaşılamadı',
   birim: 'Birim söylenmedi, "adet" varsayıldı',

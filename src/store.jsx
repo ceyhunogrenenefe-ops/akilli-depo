@@ -5,7 +5,7 @@ const Ctx = createContext(null)
 export const useStore = () => useContext(Ctx)
 
 const SETTINGS_KEY = 'akilli-depo-ayarlar-v2'
-const DEFAULT_SETTINGS = { autoSave: false, speak: true, continuous: true }
+const DEFAULT_SETTINGS = { autoSave: false, speak: true, continuous: true, inherit: false, ai: false }
 
 export function StoreProvider({ children }) {
   const [user, setUser] = useState(undefined) // undefined = yükleniyor, null = giriş yok

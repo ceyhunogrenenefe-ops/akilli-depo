@@ -41,25 +41,28 @@ Uygulama gibi tam ekran açılır.
 
 ## 3. Sesli komutlar
 
-| Söylenen | Kaydedilen |
-|---|---|
-| “Birinci palete A firması için domates salçası 40 adet ekle.” | Palet 1 · A Firması · Domates Salçası · 40 adet |
-| “İkinci palete B firmasından 25 koli makarna ekle.” | Palet 2 · B Firması · Makarna · 25 koli |
-| “3. palete C firması için 10 kasa ayran ve 5 çuval un” | 2 satır, aynı palet ve firma |
-| “Üçüncü palete A firması 10 koli çay, B firması 5 koli şeker” | 2 satır, farklı firmalar |
-| “A firması 12 koli zeytin” | Palet söylenmezse **aktif palet** |
-| “Son palete …” / “Yeni palete …” | En son palet / sıradaki yeni palet |
-| “Geri al” | Son kaydı siler |
-| Onay kartında “evet” / “iptal” | Onaylar / vazgeçer |
+**Sıra:** Palet → Firma → Ürün → Miktar → Birim
 
-- Sayılar rakamla ya da yazıyla anlaşılır: “kırk”, “yüz yirmi beş”, “on ikinci palet”, “2,5 ton”.
-- Firma, kod harfiyle (“A firması”, “be firmasından”) ya da tam adıyla (“Yılmaz Gıda için”) söylenebilir.
-- Birimler: adet/tane, koli, kutu, paket, kasa, çuval, torba, şişe, teneke, bidon, kavanoz, balya, rulo, kg/kilo, gr, ton, litre, metre.
-- **Net anlaşılan** komutlar onay sorulmadan kaydedilir, sesli olarak teyit edilir ve 7 saniye boyunca “Geri Al” ile geri alınabilir.
-- **Anlaşılmayan** komutlarda (firma/palet/ürün/miktar eksik, kayıtlı olmayan firma, sırada olmayan yeni palet numarası)
-  düzenlenebilir bir onay kartı açılır.
-- Ses tanıma tarayıcının kendi motorunu kullanır (Android Chrome, iPhone Safari, masaüstü Chrome/Edge). Desteklenmeyen
-  tarayıcılarda klavyedeki mikrofon tuşuyla dikte edip aynı kutuya yazdırabilirsiniz.
+> “Palet 1, A firması, domates salçası, 40, adet.”
+
+- Aralarda duraksayabilirsiniz; parçalar tek kayıtta birleşir ve ekrandaki 5 kutu canlı dolar.
+- Karışık sıra da anlaşılır: “A firmasına ait 40 adet domates salçasını birinci palete ekle.”
+  Sıralı okuma ile serbest okuma aynı alanda farklı sonuç verirse alan **belirsiz** kalır; sistem tahmin etmez.
+- **Eksik bilgi tahmin edilmez.** Birim söylenmezse “adet” varsayılmaz; eksik alan sarı yanar ve sesli sorulur.
+  Yalnızca eksik olanı söylemeniz yeterlidir (“kasa”, “40 adet”, “B firması”).
+- Eksiksiz anlaşılan ürün “Onay bekleyen ürünler” listesine düşer. **“kaydet”** deyince hepsi kaydedilir.
+- **Sesle düzeltme:** “miktar 50 olsun”, “firma B olsun”, “birim koli olsun”, “ürün makarna olsun”, “palet 3 olsun”
+  (şu anki kayda, yoksa listedeki son satıra uygulanır).
+- Diğer komutlar: “iptal” (şu anki kayıt), “son satırı sil”, “listeyi temizle”.
+- **Kayıtlı adlar önceliklidir:** Firma kodu/adı ve daha önce girilmiş ürün adları tanınır; “domatez salçası” → “Domates Salçası”.
+- **Öğrenme:** Kaydetmeden önce düzelttiğiniz firma/ürün adları öğrenilir (Yönetim → Sesli komut). Yanlış öğrenileni oradan silebilirsiniz.
+- Ayarlar (Sesle Ürün Ekle sayfasının altında): sürekli dinleme, sesli sorma, “palet/firma önceki satırdan devam etsin”,
+  yapay zekâ yardımı, onaysız kaydetme.
+
+### Yapay zekâ yardımı (isteğe bağlı)
+Vercel → Settings → Environment Variables'a `ANTHROPIC_API_KEY` eklenip ayarlardan açıldığında, yerel çözümleyicinin
+dolduramadığı alanlar yapay zekâya sorulur. Yapay zekâ yalnızca **boş** alanları doldurur, söyleneni değiştirmez;
+doldurduğu alanlar “YZ” etiketiyle gösterilir ve listedeki firma/birimler dışında değer kabul edilmez.
 
 ## 4. Roller
 

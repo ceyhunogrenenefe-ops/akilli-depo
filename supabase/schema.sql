@@ -281,3 +281,30 @@ do $$ begin
   begin alter publication supabase_realtime add table public.pallets;   exception when others then null; end;
   begin alter publication supabase_realtime add table public.companies; exception when others then null; end;
 end $$;
+
+-- =====================================================================
+-- Sesli komut düzeltmelerinden öğrenilen eşleştirmeler
+-- =====================================================================
+create table if not exists public.voice_aliases (
+  id         bigserial primary key,
+  kind       text not null check (kind in ('firma','urun')),
+  heard      text not null,
+  value      text not null,
+  uses       integer not null default 1,
+  updated_at timestamptz not null default now(),
+  unique (kind, heard)
+);
+alter table public.voice_aliases enable row level security;
+drop policy if exists voice_aliases_rw on public.voice_aliases;
+create policy voice_aliases_rw on public.voice_aliases for all to authenticated
+  using (my_role() in ('admin','personel')) with check (my_role() in ('admin','personel'));
+
+create or replace function public.learn_alias(p_kind text, p_heard text, p_value text)
+returns void language sql security invoker set search_path = public as $$
+  insert into public.voice_aliases(kind, heard, value)
+  values (p_kind, left(p_heard, 120), left(p_value, 200))
+  on conflict (kind, heard) do update
+    set uses = case when voice_aliases.value = excluded.value then voice_aliases.uses + 1 else 1 end,
+        value = excluded.value,
+        updated_at = now();
+$$;
