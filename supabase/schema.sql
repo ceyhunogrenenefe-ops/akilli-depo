@@ -166,22 +166,21 @@ language plpgsql security definer set search_path = public as $$
 declare
   v_action text;
   v_entity text := tg_argv[0];
+  v_old jsonb := case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) end;
+  v_new jsonb := case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) end;
 begin
   if tg_op = 'INSERT' then v_action := 'ekle';
   elsif tg_op = 'DELETE' then v_action := 'sil';
-  elsif v_entity = 'item' and old.pallet_id is distinct from new.pallet_id then v_action := 'tasi';
+  elsif v_entity = 'item' and (v_old->>'pallet_id') is distinct from (v_new->>'pallet_id') then v_action := 'tasi';
   else v_action := 'guncelle';
   end if;
-
   insert into public.audit_log(user_id, user_email, entity, entity_id, action, before, after)
   values (
     auth.uid(),
     (select email from public.profiles where id = auth.uid()),
     v_entity,
-    coalesce((case when tg_op='DELETE' then old.id else new.id end)),
-    v_action,
-    case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) end,
-    case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) end
+    coalesce((v_new->>'id')::uuid, (v_old->>'id')::uuid),
+    v_action, v_old, v_new
   );
   return coalesce(new, old);
 end $$;
@@ -308,3 +307,22 @@ returns void language sql security invoker set search_path = public as $$
         value = excluded.value,
         updated_at = now();
 $$;
+
+-- =====================================================================
+-- Palet gönderim tarihi (takvim)
+-- =====================================================================
+alter table public.pallets add column if not exists shipped_at date;
+create index if not exists pallets_shipped_idx on public.pallets(shipped_at);
+create or replace function public.pallet_ship_date() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'gonderildi' and old.status is distinct from 'gonderildi' and new.shipped_at is null then
+    new.shipped_at := (now() at time zone 'Europe/Istanbul')::date;
+  elsif new.status <> 'gonderildi' and old.status = 'gonderildi' and new.shipped_at is not distinct from old.shipped_at then
+    new.shipped_at := null;
+  end if;
+  return new;
+end $$;
+drop trigger if exists pallets_ship_date on public.pallets;
+create trigger pallets_ship_date before update on public.pallets
+  for each row execute function public.pallet_ship_date();

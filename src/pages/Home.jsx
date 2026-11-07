@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { PackagePlus, Mic, Layers, Building2, FileSpreadsheet, Send, History, UserPlus } from 'lucide-react'
+import { PackagePlus, Mic, Layers, Building2, FileSpreadsheet, Send, History, UserPlus, CalendarDays } from 'lucide-react'
 import { useStore } from '../store.jsx'
 import { unitTotals } from '../components/ui.jsx'
 
@@ -22,6 +22,7 @@ export default function Home() {
     can.edit && { label: 'Yeni Palet Oluştur', icon: PackagePlus, onClick: newPallet, cls: 'bg-brand-700 text-white' },
     can.edit && { label: 'Sesle Ürün Ekle', icon: Mic, to: '/ses', cls: 'bg-emerald-600 text-white', big: true },
     { label: 'Palet Listesi', icon: Layers, to: '/paletler' },
+    { label: 'Takvim', icon: CalendarDays, to: '/takvim' },
     can.edit || can.admin ? { label: 'Firmalar', icon: Building2, to: '/firmalar' } : null,
     { label: 'Excel İndir', icon: FileSpreadsheet, to: '/excel' },
     can.notify && { label: 'Bildirim Gönder', icon: Send, to: '/bildirim' },

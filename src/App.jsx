@@ -11,6 +11,7 @@ import ExcelPage from './pages/ExcelPage.jsx'
 import Notify from './pages/Notify.jsx'
 import History from './pages/History.jsx'
 import Admin from './pages/Admin.jsx'
+import Calendar from './pages/Calendar.jsx'
 
 export default function App() {
   const { user } = useStore()
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/bildirim" element={<Notify />} />
         <Route path="/gecmis" element={<History />} />
         <Route path="/yonetim" element={<Admin />} />
+        <Route path="/takvim" element={<Calendar />} />
         <Route path="*" element={<Home />} />
       </Routes>
     </Layout>
@@ -37,7 +39,7 @@ export default function App() {
 
 const TITLES = {
   '/ses': 'Sesle Ürün Ekle', '/paletler': 'Palet Listesi', '/firmalar': 'Firmalar', '/excel': 'Excel İndir',
-  '/bildirim': 'Bildirim Gönder', '/gecmis': 'Geçmiş İşlemler', '/yonetim': 'Yönetim',
+  '/bildirim': 'Bildirim Gönder', '/gecmis': 'Geçmiş İşlemler', '/takvim': 'Takvim', '/yonetim': 'Yönetim',
 }
 
 function Layout({ children }) {

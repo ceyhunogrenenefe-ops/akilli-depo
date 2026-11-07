@@ -7,7 +7,7 @@ import { fmtQty } from '../lib/parser.js'
 const ICON = { ekle: Plus, guncelle: Pencil, sil: Trash2, tasi: ArrowRightLeft }
 const COLOR = { ekle: 'bg-emerald-100 text-emerald-700', guncelle: 'bg-sky-100 text-sky-700', sil: 'bg-red-100 text-red-700', tasi: 'bg-violet-100 text-violet-700' }
 const VERB = { ekle: 'eklendi', guncelle: 'güncellendi', sil: 'silindi', tasi: 'taşındı' }
-const FIELD = { product: 'ürün', quantity: 'miktar', unit: 'birim', company_id: 'firma', note: 'not', status: 'durum', name: 'ad', code: 'kod', phone: 'telefon', email: 'e-posta', contact_name: 'yetkili' }
+const FIELD = { product: 'ürün', quantity: 'miktar', unit: 'birim', company_id: 'firma', note: 'not', status: 'durum', shipped_at: 'gönderim tarihi', name: 'ad', code: 'kod', phone: 'telefon', email: 'e-posta', contact_name: 'yetkili' }
 const STATUS_TR = { acik: 'Açık', tamamlandi: 'Tamamlandı', gonderildi: 'Gönderildi' }
 
 export default function History() {
@@ -23,7 +23,7 @@ export default function History() {
 
   const pal = pid => palletById[pid] ? `Palet ${palletById[pid].number}` : 'silinmiş palet'
   const co = cid => companyById[cid]?.name || 'silinmiş firma'
-  const val = (k, v) => k === 'company_id' ? co(v) : k === 'status' ? STATUS_TR[v] || v : k === 'quantity' ? fmtQty(v) : v || '—'
+  const val = (k, v) => k === 'company_id' ? co(v) : k === 'status' ? STATUS_TR[v] || v : k === 'shipped_at' ? (v ? new Date(v + 'T00:00').toLocaleDateString('tr-TR') : '—') : k === 'quantity' ? fmtQty(v) : v || '—'
 
   function describe(e) {
     const r = e.after || e.before || {}

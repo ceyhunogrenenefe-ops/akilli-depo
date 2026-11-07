@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Plus, Mic, Pencil, Trash2, ArrowRightLeft, FileSpreadsheet, Send, Star, PackageOpen } from 'lucide-react'
+import { Plus, Mic, Pencil, Trash2, ArrowRightLeft, FileSpreadsheet, Send, Star, PackageOpen, CalendarDays } from 'lucide-react'
 import { useStore, STATUS } from '../store.jsx'
 import { Modal, Empty, StatusChip, PalletSelect, unitTotals } from '../components/ui.jsx'
 import ItemForm, { resolvePalletId } from '../components/ItemForm.jsx'
@@ -48,6 +48,15 @@ export default function PalletDetail() {
             : can.edit && <button className="btn-light btn-sm" onClick={() => { setActivePalletId(id); toast(`Palet ${pallet.number} aktif palet yapıldı`) }}><Star size={14} /> Aktif yap</button>}
         </div>
         <div className="mt-1 text-sm text-slate-600">{items.length} kalem · {companyIds.length} firma{items.length > 0 && ' · ' + unitTotals(items)}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <CalendarDays size={16} className="text-slate-400" />
+          <span>Gönderim tarihi:</span>
+          {can.edit
+            ? <input type="date" className="rounded-lg border border-slate-300 px-2 py-1 text-sm" value={pallet.shipped_at || ''}
+                onChange={e => run(() => db.updatePallet(id, { shipped_at: e.target.value || null }), e.target.value ? 'Gönderim tarihi kaydedildi' : 'Gönderim tarihi silindi')} />
+            : <b>{pallet.shipped_at ? new Date(pallet.shipped_at + 'T00:00').toLocaleDateString('tr-TR', { dateStyle: 'long' }) : '—'}</b>}
+          {pallet.shipped_at && <Link to={`/takvim?d=${pallet.shipped_at}`} className="text-brand-600 underline">Takvimde gör</Link>}
+        </div>
         <div className="mt-1 text-sm text-slate-500">
           {pallet.note ? <span className="italic">{pallet.note}</span> : null}
           {can.edit && <button className="ml-2 text-brand-600 underline" onClick={() => setNoteEdit(pallet.note || '')}>{pallet.note ? 'Notu düzenle' : 'Not ekle'}</button>}

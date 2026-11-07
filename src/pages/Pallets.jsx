@@ -59,6 +59,7 @@ export default function Pallets() {
                   </div>
                   <div className="mt-1 text-sm text-slate-600">{items.length} kalem{items.length > 0 && ' · ' + unitTotals(items)}</div>
                   {cos.length > 0 && <div className="mt-1 truncate text-sm text-slate-500">{cos.join(', ')}</div>}
+                  {p.shipped_at && <div className="mt-1 text-sm text-emerald-700">Gönderim: {new Date(p.shipped_at + 'T00:00').toLocaleDateString('tr-TR', { dateStyle: 'medium' })}</div>}
                   {p.note && <div className="mt-1 truncate text-sm italic text-slate-500">{p.note}</div>}
                 </Link>
               )

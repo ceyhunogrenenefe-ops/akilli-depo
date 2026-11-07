@@ -12,6 +12,7 @@ export const supabase = DEMO ? null : createClient(URL, KEY)
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2))
 const now = () => new Date().toISOString()
+export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 // ---------------------------------------------------------------- Demo
 const LS = 'akilli-depo-demo-v1'
@@ -79,6 +80,9 @@ const demo = {
   },
   async updatePallet(id, patch) {
     const before = load().pallets.find(p => p.id === id)
+    patch = { ...patch }
+    if (patch.status === 'gonderildi' && before.status !== 'gonderildi' && !before.shipped_at && !('shipped_at' in patch)) patch.shipped_at = todayStr()
+    else if (patch.status && patch.status !== 'gonderildi' && before.status === 'gonderildi' && !('shipped_at' in patch)) patch.shipped_at = null
     return demoMutate(d => Object.assign(d.pallets.find(p => p.id === id), patch), { entity: 'pallet', entity_id: id, action: 'guncelle', before, after: { ...before, ...patch } })
   },
   async deletePallet(id) {
